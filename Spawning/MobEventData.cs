@@ -8,17 +8,19 @@ public class MobEventData : EventData
     [Header("Mob Data")]
     [Range(0f, 360f)] public float possibleAngles = 360f;
     [Min(0)] public float spawnRadius = 2f, spawnDistance = 20f;
-    public bool isPlantWave = false;
+    [Header("Plant Wave Data")]
+    public bool isCircleSpawning = false;
     public float plantWaveDuration;
 
     public override bool Activate(PlayerStats player = null)
     {
+        Debug.Log($"activate called with player: {player == null}");
         //only activate this if the player is present
         if (player)
         {
             //otherwise, we spawn a mob outside of the screen and move it towards the player
             float randomAngle = Random.Range(0, possibleAngles) * Mathf.Deg2Rad;
-            if (!isPlantWave)
+            if (!isCircleSpawning)
             {
                 foreach (GameObject o in GetSpawns())
                 {
@@ -27,6 +29,7 @@ public class MobEventData : EventData
                         (spawnDistance + Random.Range(-spawnRadius, spawnRadius)) * Mathf.Sin(randomAngle)
                         ), Quaternion.identity);
                 }
+                return true;
             }
             else
             {
@@ -47,6 +50,7 @@ public class MobEventData : EventData
 
                     index++;
                 }
+                return true;
             }
         }
         return false;
