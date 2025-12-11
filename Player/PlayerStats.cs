@@ -5,7 +5,7 @@ using TMPro;
 using Unity.VisualScripting.Antlr3.Runtime.Misc;
 using UnityEngine;
 using UnityEngine.UI;
-public class PlayerStats : MonoBehaviour
+public class PlayerStats : EntityStats
 {
     CharacterData characterData;
     public CharacterData.Stats baseStats;
@@ -21,7 +21,6 @@ public class PlayerStats : MonoBehaviour
         get { return actualStats; }
     }
 
-    float health;
 
 
 
@@ -75,8 +74,6 @@ public class PlayerStats : MonoBehaviour
 
     PlayerCollector collector;
     PlayerInventory inventory;
-    public int weaponIndex;
-    public int passiveItemIndex;
 
 
     [Header("UI")]
@@ -124,8 +121,9 @@ public class PlayerStats : MonoBehaviour
     }
 
 
-    private void Update()
+    protected override void Update()
     {
+        base.Update();
         if(invincibilityTimer > 0)
         {
             invincibilityTimer -= Time.deltaTime;
@@ -139,7 +137,7 @@ public class PlayerStats : MonoBehaviour
         Recover();
     }
 
-    public void RecalculateStats()
+    public override void RecalculateStats()
     {
         actualStats = baseStats;
         foreach(PlayerInventory.Slot s in inventory.passiveSlots)
@@ -149,6 +147,12 @@ public class PlayerStats : MonoBehaviour
             {
                 actualStats += p.GetBoosts();
             }
+        }
+
+        //we have to account for the buffs from EntityStats as well
+        foreach(Buff b in activeBuffs)
+        {
+            actualStats += b.GetData().playerModifier;
         }
         collector.SetRadius(actualStats.magnet);
     }
@@ -194,7 +198,7 @@ public class PlayerStats : MonoBehaviour
                levelText.text = "LVL: " + level.ToString();
     }
 
-    public void TakeDamage(float dmg) 
+    public override void TakeDamage(float dmg) 
     {
         if (!isInvincible)
         {
@@ -230,7 +234,7 @@ public class PlayerStats : MonoBehaviour
         healthBar.fillAmount = CurrentHealth / actualStats.maxHealth;
     }
 
-    public void Kill()
+    public override void Kill()
     {
         if (!GameManager.instance.isGameOver)
         {
@@ -240,7 +244,7 @@ public class PlayerStats : MonoBehaviour
     }
 
 
-    public void RestoreHealth(float amount)
+    public override void RestoreHealth(float amount)
     {
         if (CurrentHealth < actualStats.maxHealth)
         {

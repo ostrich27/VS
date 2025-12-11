@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using UnityEngine;
 
 [RequireComponent(typeof(SpriteRenderer))]
-public class EnemyStats : MonoBehaviour
+public class EnemyStats : EntityStats
 {
     [System.Serializable]
     public struct Resistances
     {
-        [Range(0f, 1f)] public float freeze, kill, debuff;
+        [Range(-1f, 1f)] public float freeze, kill, debuff;
 
         //to allow us to multiply the resistances
         public static Resistances operator *(Resistances r, float factor)
@@ -18,12 +18,20 @@ public class EnemyStats : MonoBehaviour
             r.debuff = Mathf.Min(1, r.debuff * factor);
             return r;
         }
+
+        public static Resistances operator +(Resistances r, Resistances r2)
+        {
+            r.freeze += r2.freeze;
+            r.kill += r2.kill;
+            r.debuff += r2.debuff;
+            return r;
+        }
     }
 
     [System.Serializable]
     public struct Stats
     {
-        [Min(0)] public float maxHealth, moveSpeed, damage, knockbackMultiplier;
+        public float maxHealth, moveSpeed, damage, knockbackMultiplier;
         public Resistances resistances;
 
         [System.Flags]
@@ -45,6 +53,17 @@ public class EnemyStats : MonoBehaviour
 
         //use the XOR operator for level boosted stats
         public static Stats operator ^(Stats s1, float factor) { return Boost(s1, factor, s1.levelBoosts); }
+
+        //use the add operator to add stats to the enemy
+        public static Stats operator +(Stats s1, Stats s2)
+        {
+            s1.maxHealth += s2.maxHealth;
+            s1.moveSpeed += s2.moveSpeed;
+            s1.damage += s2.damage;
+            s1.knockbackMultiplier += s2.knockbackMultiplier;
+            s1.resistances += s2.resistances;
+            return s1;
+        }
     }
 
     public Stats baseStats = new Stats { maxHealth = 10, moveSpeed = 1, damage = 3, knockbackMultiplier = 1 };
@@ -53,8 +72,6 @@ public class EnemyStats : MonoBehaviour
     {
         get {  return actualStats; }
     }
-
-    float currentHealth;
 
 
     [Header("Damage Feedback")]
@@ -76,19 +93,56 @@ public class EnemyStats : MonoBehaviour
     void Start()
     {
         RecalculateStats();
-        currentHealth = actualStats.maxHealth;
+        health = actualStats.maxHealth;
         sr = GetComponent<SpriteRenderer>();
         originalColor = sr.color;
         movement = GetComponent<EnemyMovement>();
     }
 
     //calculates the actual stats of the enemy based on a variety of factors
-    public void RecalculateStats()
+    public override void RecalculateStats()
     {
+        //we have to account for the buffs from EntityStats as well
+        foreach(Buff b in activeBuffs)
+        {
+            actualStats += b.GetData().enemyModifier;
+        }
+
         //calculate curse boosts
         float curse = GameManager.GetCumulativeCurse(),
             level = GameManager.GetCumulativeLevels();
         actualStats = (baseStats * curse) ^ level;
+    }
+
+    public override void TakeDamage(float dmg)
+    {
+        health -= dmg;
+
+        //if damage is exactly equal to maximum health, we assume it is an insta-kill and
+        //check for the kill resistance to see if we can dodge this damage
+        if(dmg == actualStats.maxHealth)
+        {
+            //roll a dice to check if we can dodge the damage.
+            //gets a random value between 0 to 1, and if the number is 
+            //bellow the kill resistance, then we avoid getting killed
+            if(Random.value < actualStats.resistances.kill)
+            {
+                return; //don't take damage
+            }
+        }
+
+        //create the text popup when enemy takes damage
+        if(dmg > 0)
+        {
+            StartCoroutine(DamageFlash());
+            GameManager.GenerateFloatingText(Mathf.FloorToInt(dmg).ToString(), transform);
+        }
+
+        //kills the enemy if the health drops below zero
+        if(health <= 0)
+        {
+            Kill();
+        }
     }
 
     /// <summary>
@@ -100,38 +154,26 @@ public class EnemyStats : MonoBehaviour
 
     public void TakeDamage(float dmg, Vector2 sourcePosition,float knockbackForce = 5f, float knockbackDuration = 0.2f)
     {
+        TakeDamage(dmg);
 
-        //if damage is exactly equal to maximum health, we assume it is an insta-kill and
-        //check for the kill resistance to see if we can dodge this damage
-        if(Mathf.Approximately(dmg, actualStats.maxHealth))
+        //apply knockback if it is not zero
+        if(knockbackForce > 0)
         {
-            //roll a dice to check if we can dodge the damage.
-            //gets a random value between 0 to 1, and if the number is 
-            //bellow the kill resistance, then we avoid getting killed
-            if(Random.value < actualStats.resistances.kill)
-            {
-                return;
-            }
-        }
-        currentHealth -= dmg;
-        StartCoroutine(DamageFlash());
-
-        //create floating text to show damage taken
-        if (dmg > 0)
-        {
-            GameManager.GenerateFloatingText(Mathf.FloorToInt(dmg).ToString(), transform);
-        }
-        // apply knockback if it is not zero
-        if (knockbackForce > 0)
-        {
-            // gets the direction of knockback
+            //get the direction of knockback
             Vector2 dir = (Vector2)transform.position - sourcePosition;
             movement.Knockback(dir.normalized * knockbackForce, knockbackDuration);
         }
+    }
 
-        if (currentHealth <= 0)
+    public override void RestoreHealth(float ammount)
+    {
+        if(health < actualStats.maxHealth)
         {
-            Kill();
+            health += ammount;
+            if(health > actualStats.maxHealth)
+            {
+                health = actualStats.maxHealth;
+            }
         }
     }
 
@@ -143,7 +185,7 @@ public class EnemyStats : MonoBehaviour
         sr.color = originalColor;
     }
 
-    public void Kill()
+    public override void Kill()
     {
         //enable drops if the enemy is killed, since drops are disabled by default
         DropRateManager drops = GetComponent<DropRateManager>();
