@@ -1,0 +1,463 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
+using Unity.VisualScripting;
+
+public class PlayerInventory : MonoBehaviour
+{
+    [System.Serializable]
+
+    public class Slot
+    {
+        public Item item;
+
+        public void Assign(Item assignedItem)
+        {
+            item = assignedItem;
+            if (item is Weapon)
+            {
+                Weapon w = item as Weapon;
+            }
+            else
+            {
+                Passive p = item as Passive;
+            }
+            Debug.Log(string.Format("Assigned {0} to player.", item.name));
+        }
+
+        public void Clear()
+        {
+            item = null;
+        }
+
+        public bool IsEmpty()
+        {
+            return item == null;
+        }
+    }
+
+    public List<Slot> weaponSlots = new List<Slot>(6);
+    public List<Slot> passiveSlots = new List<Slot>(6);
+    public UIInventoryIconDisplay weaponUI, passiveUI;
+
+
+
+
+    [Header("UI Elements")]
+    public List<WeaponData> availableWeapons = new List<WeaponData>(); // list of upgrade options for weapons
+    public List<PassiveData> availablePassives = new List<PassiveData>();
+    public UIUpgradeWindow upgradeWindow;
+    PlayerStats player;
+
+    void Start()
+    {
+        player = GetComponent<PlayerStats>();
+    }
+
+    // check if inventory has an item of certain type.
+    public bool Has(ItemData type) { return Get(type); }
+
+    public Item Get(ItemData type)
+    {
+        if (type is WeaponData) return Get(type as WeaponData);
+        else if (type is PassiveData) return Get(type as PassiveData);
+        return null;
+    }
+
+    //find a passive of a certain type in the inventory
+    public Passive Get(PassiveData type)
+    {
+        foreach (Slot s in passiveSlots)
+        {
+            Passive p = s.item as Passive;
+            if (p && p.data == type)
+                return p;
+        }
+        return null;
+    }
+
+    //find a weapon of a certain type in the inventory
+    public Weapon Get(WeaponData type)
+    {
+        foreach (Slot s in weaponSlots)
+        {
+            Weapon w = s.item as Weapon;
+            if (w && w.data == type)
+                return w;
+        }
+        return null;
+    }
+
+    //removes a weapon of a particular type as specified by <data>
+    public bool Remove(WeaponData data, bool removeUpgradeAvailability = false)
+    {
+        //remove this weapon from the upgrade pool.
+        if (removeUpgradeAvailability) availableWeapons.Remove(data);
+
+        for (int i = 0; i < weaponSlots.Count; i++)
+        {
+            Weapon w = weaponSlots[i].item as Weapon;
+            if (w.data == data)
+            {
+                weaponSlots[i].Clear();
+                w.OnEquip();
+                Destroy(w.gameObject);
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    //removes a passive of a particular type as specified by <data>
+    public bool Remove(PassiveData data, bool removeUpgradeAvailability = false)
+    {
+        //remove this passive from the upgrade pool.
+        if (removeUpgradeAvailability) availablePassives.Remove(data);
+        for (int i = 0; i < weaponSlots.Count; i++)
+        {
+            Passive p = weaponSlots[i].item as Passive;
+            if (p.data == data)
+            {
+                weaponSlots[i].Clear();
+                p.OnEquip();
+                Destroy(p.gameObject);
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    //if ItemData is passed,determine what type it is and call the respective overload
+    //we also have an optional boolean to remove the item from upgrade list
+
+    public bool Remove(ItemData data, bool removeUpgradeAvailability = false)
+    {
+        if (data is WeaponData) return Remove(data as WeaponData, removeUpgradeAvailability);
+        else if (data is PassiveData) return Remove(data as PassiveData, removeUpgradeAvailability);
+        return false;
+    }
+
+
+    //finds an empty slot and adds a weapon of certain type, returns the slot number that the item was put in
+
+    public int Add(WeaponData data, bool updateUI = true)
+    {
+        int slotNum = -1;
+
+        //try to find an empty slot
+        for (int i = 0; i < weaponSlots.Capacity; i++)
+        {
+            if (weaponSlots[i].IsEmpty())
+            {
+                slotNum = i;
+                break;
+            }
+        }
+
+        //if there is no empty slot, exit.
+        if (slotNum < 0) return slotNum;
+
+        //otherwise, create the weapon in the slot.
+        //get type of the weapon we want to spawn
+        Type weaponType = Type.GetType(data.behaviour);
+
+        if (weaponType != null)
+        {
+            //spawn the weapon gameobject
+            GameObject go = new GameObject(data.baseStats.name + " Controller");
+            Weapon spawnedWeapon = (Weapon)go.AddComponent(weaponType);
+            spawnedWeapon.transform.SetParent(transform); // set weapon to be a child of player
+            spawnedWeapon.transform.localPosition = Vector2.zero;
+            spawnedWeapon.Initialise(data);
+            spawnedWeapon.OnEquip();
+
+            //assign the weapon to the slot
+            weaponSlots[slotNum].Assign(spawnedWeapon);
+            if(updateUI)weaponUI.Refresh();
+
+            //close the levelUp UI if it is on
+            if (GameManager.instance != null && GameManager.instance.chosingUpgrade)
+            {
+                GameManager.instance.EndLevelUp();
+            }
+            return slotNum;
+        }
+        else
+        {
+            Debug.LogWarning(string.Format("invalid weapon type specified for {0}", data.name));
+        }
+
+        return -1;
+    }
+
+    //finds an empty slot and adds a passive of certain type, returns the slot number that the item was put in
+    public int Add(PassiveData data, bool updateUI = true)
+    {
+        int slotNum = -1;
+
+        //try to find an empty slot
+        for (int i = 0; i < passiveSlots.Capacity; i++)
+        {
+            if (passiveSlots[i].IsEmpty())
+            {
+                slotNum = i;
+                break;
+            }
+        }
+        //if there is no empty slot, exit.
+        if (slotNum < 0) return slotNum;
+
+        //otherwise, create the passive in the slot.
+        //get type of the passive we want to spawn
+        GameObject go = new GameObject(data.baseStats.name + " Passive");
+        Passive p = go.AddComponent<Passive>();
+        p.transform.SetParent(transform); // set passive to be a child of player
+        p.transform.localPosition = Vector2.zero;
+        p.Initialise(data);
+
+        //assign the passive to the slot
+        passiveSlots[slotNum].Assign(p);
+        if(updateUI)passiveUI.Refresh();
+
+        if (GameManager.instance != null && GameManager.instance.chosingUpgrade)
+        {
+            GameManager.instance.EndLevelUp();
+        }
+        player.RecalculateStats();
+        return slotNum;
+    }
+
+    //if we don't know what item is being added, this function will determine that.
+    public int Add(ItemData data, bool updateUI = true)
+    {
+        if (data is WeaponData) return Add(data as WeaponData,updateUI);
+        else if (data is PassiveData) return Add(data as PassiveData,updateUI);
+        return -1;
+    }
+
+    //overload so that we can use both ItemData or item to level up an item in the inventory
+    public bool LevelUp(ItemData data, bool updateUI = true)
+    {
+        Item item = Get(data);
+        if (item) return LevelUp(item, updateUI);
+        return false;
+    }
+
+    //levels up a selected weapon in the player inventory
+    public bool LevelUp(Item item, bool updateUI = true)
+    {
+        //tries to level up the item
+        if (!item.DoLevelUp(updateUI))
+        {
+            Debug.LogWarning(string.Format("failed to level up {0}", item.name));
+            return false;
+        }
+
+        //update the UI after the weapon has levelled up
+        if (updateUI)
+        {
+            weaponUI.Refresh();
+            passiveUI.Refresh();
+        }
+
+        //close the levelUp screen afterwards
+        if (GameManager.instance != null && GameManager.instance.chosingUpgrade)
+        {
+            GameManager.instance.EndLevelUp();
+        }
+
+        //if it is a passive, recalculate player stats
+        if (item is Passive) player.RecalculateStats();
+
+        return true;
+    }
+
+    //check a list of slots to see if there are any slots left.
+    int GetSlotsLeft(List<Slot> slots)
+    {
+        int count = 0;
+        foreach (Slot s in slots)
+        {
+            if (s.IsEmpty()) count++;
+        }
+        return count;
+    }
+
+    //generic variants of GetSlotsLeft(), which is easier to use
+    public int GetSlotsLeft<T>() where T : Item { return GetSlotsLeft(new List<Slot>(Getslots<T>() )); }
+    public int GetSlotsLeftFor<T>() where T : ItemData { return GetSlotsLeft(new List<Slot>(GetSlotsFor<T>() )); }
+
+    //determines what upgrade options should appear
+    void ApplyUpgradeOptions()
+    {
+        //<availableUpgrades> is an empty list that will be filtered from <allUpgrades>,
+        //which is the list of all upgrades in PlayerInventory.
+        //not all upgrades can be applied,as some may have allready maxed out a player, or player may not have enough inventory slots.
+        List<ItemData> availableUpgrades = new List<ItemData>();
+        List<ItemData> allUpgrades = new List<ItemData>(availableWeapons);
+        allUpgrades.AddRange(availablePassives);
+
+        //we need to know how many weapon/passive slots are left
+        int weaponSlotsLeft = GetSlotsLeft(weaponSlots);
+        int passiveSlotsLeft = GetSlotsLeft(passiveSlots);
+
+        //filthers trough the available weapons and passives and adds those that can possibly be an option.
+        foreach(ItemData data in allUpgrades)
+        {
+            //if a weapon of this type already exists, allow for the upgrade if the level of the weapon is not allready maxed out.
+            Item obj = Get(data);
+            if (obj)
+            {
+                if (obj.currentLevel < data.maxLevel) availableUpgrades.Add(data);
+
+            }
+            else
+            {
+               //if we don't have this item in the inventory yet, check if we have enough slots to take new items
+               if(data is WeaponData && weaponSlotsLeft > 0) availableUpgrades.Add(data);
+                else if (data is PassiveData && passiveSlotsLeft > 0) availableUpgrades.Add(data);
+            }
+        }
+
+        //show the UI upgrade window if we still have available upgrades left
+        int availUpgradeCount = availableUpgrades.Count;
+        if (availUpgradeCount > 0)
+        {
+            bool getExtraItem = 1f - 1f / player.Stats.luck > UnityEngine.Random.value;
+            if (getExtraItem || availUpgradeCount < 4) upgradeWindow.SetUpgrades(this, availableUpgrades, 4);
+            else upgradeWindow.SetUpgrades(this, availableUpgrades, 3," Increase your Luck stat for a chance to get 4 items!");
+        }
+        else if (GameManager.instance != null && GameManager.instance.chosingUpgrade)
+        {
+            GameManager.instance.EndLevelUp();
+        }
+
+
+    }
+
+    public void RemoveAndApplyUpgrades()
+    {
+        ApplyUpgradeOptions();
+    }
+
+    /// <summary>
+    /// get all the slots from the player of a certain type,
+    /// either Weapon or Passive. if you get all slots of item,
+    /// it will return all weapons and passives.
+    /// </summary>
+    /// 
+    public Slot[] Getslots<T>() where T : Item
+    {
+        //check which set of slots  to return
+        //if you get Items, it will give you both weapon and passive slots
+        switch (typeof(T).ToString())
+        {
+            case "Passive":
+                return passiveSlots.ToArray();
+                case "Weapon":
+                return weaponSlots.ToArray();
+                case "Item":
+                List<Slot> s = new List<Slot>(passiveSlots);
+                s.AddRange(weaponSlots);
+                return s.ToArray();
+        }
+
+        //if you have other subclasses of Item, you will need to add extra cases above to
+        //prevent this message from triggering. this message is here to help developers pinpoint
+        //the part of the code they need to update
+        Debug.LogWarning("Generic Type provided to GetSlots() call does not have a coded behaviour.");
+        return null;
+    }
+
+    //version of GetSlots() that works with ItemData instead of Item
+    public Slot[] GetSlotsFor<T>() where T : ItemData
+    {
+        if(typeof(T) == typeof(PassiveData))
+        {
+            return passiveSlots.ToArray();
+        }
+        else if (typeof(T) == typeof(WeaponData))
+        {
+            return weaponSlots.ToArray();
+        }
+        else if(typeof(T) == typeof(ItemData))
+        {
+            List<Slot> s = new List<Slot>(passiveSlots);
+            s.AddRange(weaponSlots);
+            return s.ToArray();
+        }
+        //if you have other subclasses of Item, you will need to add extra cases above to
+        //prevent this messae from triggering. this message is here to help developers pinpoint
+        //the part of the code they need to update.
+        Debug.LogWarning("Generic type provided to GetSlotsFor() call does not have a coded behaviour,");
+        return null;
+    }
+
+    public T[] GetAvailable<T>() where T : ItemData
+    {
+        if(typeof(T) == typeof(PassiveData))
+        {
+            return availablePassives.ToArray() as T[];
+        }
+        else if (typeof (T) == typeof(WeaponData))
+        {
+            return availableWeapons.ToArray() as T[];
+        }
+        else if (typeof (T) == typeof(ItemData))
+        {
+            List<ItemData> list = new List<ItemData>(availablePassives);
+            list.AddRange(availableWeapons);
+            return list.ToArray() as T[];
+        }
+
+        Debug.LogWarning("Generic type provided to GetAvailable() call does not have a coded behaviour.");
+        return null;
+    }
+
+    //get all available items (weapons or passives) that we still do not have yet
+    public T[] GetUnowned<T>() where T : ItemData
+    {
+        //get all available items
+        var available = GetAvailable<T>();
+
+        if (available == null || available.Length == 0)
+            return new T[0]; //return empty array if null or empty
+
+        List<T> list = new List<T>(available);
+
+        //check all of our slots, and remove all items in the list that are found in the slots
+        var slots = GetSlotsFor<T>();
+        if(slots != null)
+        {
+            foreach(Slot s in slots)
+            {
+                if (s?.item?.data != null && list.Contains(s.item.data as T))
+                    list.Remove(s.item.data as T);
+            }
+        }
+        return list.ToArray();
+    }
+
+    public T[] GetEvolvables<T>() where T : Item
+    {
+        //check all the slots, and find all the items in the slot that are capable of evolving
+        List<T> result = new List<T>();
+        foreach(Slot s in Getslots<T>())
+            if (s.item is T t && t.CanEvolve(0).Length > 0) result.Add(t);
+        return result.ToArray();
+    }
+
+    public T[] GetUpgradables<T>() where T : Item
+    {
+        //check all the slots, and find all the items in the slot that
+        //are still capable of levelling up
+        List<T> result = new List<T>();
+        foreach (Slot s in Getslots<T>())
+            if (s.item is T t && t.CanLevelUp()) result.Add(t);
+        return result.ToArray();
+    }
+}
